@@ -30,12 +30,13 @@ class TelegramBot:
             fallbacks=[CommandHandler('get_temperature', self.get_temperature)]
         )
         # инлайн клавиатура с кнопками  для добавления город в список отслеживаемых
-        self.inline_keyboard = InlineKeyboardMarkup([
+        self.inline_keyboard_city = InlineKeyboardMarkup([
             [InlineKeyboardButton("Добавить", callback_data='add')],
             [InlineKeyboardButton("Не добавить", callback_data='no_add')],
             [InlineKeyboardButton("Открыть список отслеживаемых городов", callback_data='tracked cities')]
-        ]
-        )
+        ])
+        # инлайн клавиатура с кнопками  для вывода списка отслеживаемых городов
+        self.inline_keyboard_tracked_cities = InlineKeyboardMarkup([])
         # подключаемся к базе данных
         self.conn = sqlite3.connect('tracked_cities.db')
         self.cursor = self.conn.cursor()
@@ -46,7 +47,7 @@ class TelegramBot:
         # обработчики
         self.aplication.add_handler(self.handler_city)
         self.aplication.add_handler(CommandHandler('start', self.start))
-        self.aplication.add_handler(CallbackQueryHandler(self.button_click))
+        self.aplication.add_handler(CallbackQueryHandler(self.button_click_city))
         self.aplication.add_handler(CommandHandler('tracked_cities', self.show_tracked_cities))
 
     # приветствие и ознакомление
@@ -68,13 +69,13 @@ class TelegramBot:
         if weather != 'miss':  # мис отправляется в случае если неправильно написан город или его нет openweathermap
             self.logger.info(weather)
             await update.message.reply_text(f"Сейчас в городе {weather}° "
-                                            f"{get_status(city)}", reply_markup=self.inline_keyboard)
+                                            f"{get_status(city)}", reply_markup=self.inline_keyboard_city)
         else:
             await update.message.reply_text("Кажется, вы неправильно ввели город... Попробуйте ещё раз! /weather")
         return ConversationHandler.END
 
     # основные инлайн кнопки для работы приложения
-    async def button_click(self, update, context):
+    async def button_click_city(self, update, context):
         query = update.callback_query
         user_id = query.from_user.id
         button_type = query.data
@@ -111,10 +112,14 @@ class TelegramBot:
         tracked_cities = self.cursor.fetchall()
         if tracked_cities:
             message = "Список отслеживаемых городов:\n\n"
+            self.inline_keyboard_tracked_cities = \
+                InlineKeyboardMarkup([[InlineKeyboardButton(city_name,)] for city_name in tracked_cities])
             for city_name in tracked_cities:
                 weather = get_temperature(*city_name)
                 status = get_status(*city_name)
                 message += f"{weather}° {status}\n"
+
+
         else:
             message = "У вас пока нет отслеживаемых городов."
 
