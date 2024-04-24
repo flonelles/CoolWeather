@@ -5,7 +5,6 @@ import requests
 import calendar
 import locale
 from datetime import datetime, timedelta
-import datetime
 
 WEATHER_KEY = environ['WEATHER_KEY']
 
@@ -19,12 +18,12 @@ def get_temperature(city: str) -> str:
         observation = mgr.weather_at_place(city)
         weather = observation.weather
         temperature = weather.temperature('celsius')['temp']
-        return f'{city} {temperature}'.capitalize()
+        return f'{temperature}C°'.capitalize()
     except Exception:
-        return 'miss'
+        return ''
 
 
-def get_status(city: str):
+def get_status(city: str) -> str:
     config_dict = get_default_config()
     config_dict['language'] = 'ru'
     owm = OWM(WEATHER_KEY, config_dict)
@@ -34,7 +33,7 @@ def get_status(city: str):
     return weather.detailed_status.capitalize()
 
 
-def get_weather_week(city):
+def get_weather_week(city: str) -> str:
     try:
         if ''.join(set(city)) == ' ':
             raise Exception
@@ -63,7 +62,7 @@ def get_weather_week(city):
             month = months_names[int(forecast_date.strftime("%m"))]
             day_of_week = days_of_week[forecast_date.weekday()]
 
-            temperature = f"{int(forecast['main']['temp'])}°C"
+            temperature = f"{forecast['main']['temp']}°C"
             weather_info = f"{day_number} {month}, {day_of_week}: {temperature}"
 
             if day_number not in forecast_by_day:
@@ -71,9 +70,4 @@ def get_weather_week(city):
         forecast_strings = [forecast_by_day[day] for day in sorted(forecast_by_day.keys())]
         return "\n".join(forecast_strings)
     except Exception:
-        return 'miss'
-
-
-
-
-
+        return ''
