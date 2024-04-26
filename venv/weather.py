@@ -71,3 +71,4 @@ def get_weather_week(city: str) -> str:
         return "\n".join(forecast_strings)
     except Exception:
         return ''
+

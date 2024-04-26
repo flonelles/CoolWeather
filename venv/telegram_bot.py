@@ -1,8 +1,16 @@
 import logging
 import sqlite3
 
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+    CallbackQueryHandler,
+    CallbackContext
+)
 from os import environ
 from weather import get_temperature, get_status, get_weather_week
 
@@ -24,9 +32,16 @@ class TelegramBot:
         self.handler_city = ConversationHandler(
             entry_points=[CommandHandler('start_weather_message', self.start_weather_message)],
             states={
-                # Функция читает ответ на первый вопрос и задаёт второй.
                 'get_temperature_message': [MessageHandler(filters.TEXT & ~filters.COMMAND,
                                                            self.get_temperature_message)],
+            },
+            fallbacks=[]
+        )
+        # диалог для получения местоположения пользователя и вывода погоды
+        self.handler_location_weather = ConversationHandler(
+            entry_points=[CommandHandler('start_get_location', self.start_get_location)],
+            states={
+                # 'get_temperature': [MessageHandler(filters.TEXT & ~filters.COMMAND,)],
             },
             fallbacks=[]
         )
@@ -34,6 +49,12 @@ class TelegramBot:
         self.inline_keyboard_city = InlineKeyboardMarkup([
             [InlineKeyboardButton("Добавить", callback_data='add')],
             [InlineKeyboardButton("Не добавить", callback_data='no_add')],
+            [InlineKeyboardButton("Открыть список отслеживаемых городов", callback_data='tracked cities')]
+        ])
+        # инлайн клавиатура для начала работы приложения
+        self.inline_keyboard_start = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Узнать погоду по городу", callback_data='get_weather_city')],
+            [InlineKeyboardButton("Узнать погоду по местоположению", callback_data='get_location')],
             [InlineKeyboardButton("Открыть список отслеживаемых городов", callback_data='tracked cities')]
         ])
         # инлайн клавиатура с кнопками  для вывода списка отслеживаемых городов
@@ -48,14 +69,14 @@ class TelegramBot:
         # обработчики
         self.aplication.add_handler(self.handler_city)
         self.aplication.add_handler(CommandHandler('start', self.start))
-        self.aplication.add_handler(CallbackQueryHandler(self.button_click_city))
+        self.aplication.add_handler(CallbackQueryHandler(self.button_click))
         self.aplication.add_handler(CommandHandler('tracked_cities', self.show_tracked_cities))
-
+        self.aplication.add_handler(CommandHandler('start_get_location', self.start_get_location))
     # приветствие и ознакомление
-    async def start(self, update):
+    async def start(self, update, context):
         user = update.effective_user
         await update.message.reply_html(
-            rf"Привет {user.mention_html()}! Чтобы узнать погоду в городе - печатай /start_weather_message",
+            rf"Привет {user.mention_html()}! Вот мои функции:", reply_markup=self.inline_keyboard_start
         )
 
     # вход в диалог для нахождения погоды в городе
@@ -68,17 +89,18 @@ class TelegramBot:
     async def get_temperature_message(self, update, context):
         city = update.message.text
         weather = get_temperature(city)
-        if weather != '':  # отправляется в случае если неправильно написан город или его нет в openweathermap
+        if weather != '':
             self.logger.info(weather)
             await update.message.reply_text(f"Сейчас в городе {city.lower().capitalize()}: {weather}"
-                                            f" {get_status(city)}", reply_markup=self.inline_keyboard_city)
+                                            f" {get_status(city)}\n\nДобавить город в список отслеживаемых?",
+                                            reply_markup=self.inline_keyboard_city)
         else:
             await update.message.reply_text("Кажется, вы неправильно ввели город... Попробуйте ещё раз!"
                                             " /start_weather_message")
         return ConversationHandler.END
 
-    # инлайн кнопки для работы приложения
-    async def button_click_city(self, update, context):
+    # обработчик кнопок
+    async def button_click(self, update, context):
         query = update.callback_query
         user_id = query.from_user.id
         button_type = query.data
@@ -94,9 +116,29 @@ class TelegramBot:
             await query.answer("Город не добавлен.")
         elif button_type == 'tracked cities':
             await self.show_tracked_cities(update, context)
+        elif button_type == 'get_weather_city':
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text='Введите команду /start_weather_message'
+            )
+        elif button_type == 'get_location':
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text='Введите команду /get_weather_location'
+            )
         else:
             await query.answer('Отправляю...')
-            await self.get_full_weather_city(update, button_type) # в button_type сейчас лежит город
+            await self.get_full_weather_city(update, button_type)  # в button_type сейчас лежит город
+
+    # получить погоду по местоположению
+    async def start_get_location(self, update, context):
+
+        keyboard = ReplyKeyboardMarkup(
+            [[KeyboardButton("Поделиться местоположением", request_location=True)]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await update.message.reply_text("Пожалуйста, поделитесь своим местоположением.", reply_markup=keyboard)
 
     async def get_full_weather_city(self, update, city):
         weather_for_week = get_weather_week(city)
