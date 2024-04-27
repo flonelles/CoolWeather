@@ -1,7 +1,13 @@
 import logging
 import sqlite3
 
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton, Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -12,7 +18,8 @@ from telegram.ext import (
     CallbackContext
 )
 from os import environ
-from weather import get_temperature, get_status, get_weather_week
+from bot.weather.weather import get_temperature, get_status, get_weather_week
+from bot.location.location import get_city_by_coordinates
 
 BOT_TOKEN = environ["BOT_TOKEN"]
 
@@ -41,7 +48,7 @@ class TelegramBot:
         self.handler_location_weather = ConversationHandler(
             entry_points=[CommandHandler('start_get_location', self.start_get_location)],
             states={
-                # 'get_temperature': [MessageHandler(filters.TEXT & ~filters.COMMAND,)],
+                'get_weather_location': [MessageHandler(filters.LOCATION, self.get_weather_location)],
             },
             fallbacks=[]
         )
@@ -60,7 +67,7 @@ class TelegramBot:
         # инлайн клавиатура с кнопками  для вывода списка отслеживаемых городов
         self.inline_keyboard_tracked_cities = InlineKeyboardMarkup([])
         # подключаемся к базе данных
-        self.conn = sqlite3.connect('tracked_cities.db')
+        self.conn = sqlite3.connect('../tracked_cities.db')
         self.cursor = self.conn.cursor()
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS tracked_cities
                                               (user_id INTEGER, city_name TEXT)''')
@@ -68,16 +75,25 @@ class TelegramBot:
 
         # обработчики
         self.aplication.add_handler(self.handler_city)
+        self.aplication.add_handler(self.handler_location_weather)
         self.aplication.add_handler(CommandHandler('start', self.start))
         self.aplication.add_handler(CallbackQueryHandler(self.button_click))
         self.aplication.add_handler(CommandHandler('tracked_cities', self.show_tracked_cities))
-        self.aplication.add_handler(CommandHandler('start_get_location', self.start_get_location))
+        self.aplication.add_handler(CommandHandler('help', self.help))
+
     # приветствие и ознакомление
     async def start(self, update, context):
         user = update.effective_user
         await update.message.reply_html(
             rf"Привет {user.mention_html()}! Вот мои функции:", reply_markup=self.inline_keyboard_start
         )
+
+    # помощь
+    async def help(self, update, context):  # контекст нужен
+        await update.message.reply_html('/start - начало работы бота\n'
+                                        '/tracked_cities - открыть список отслеживаемых городов\n'
+                                        '/start_get_location - погода по геолокации\n'
+                                        '/start_weather_message - погода по введенному городу')
 
     # вход в диалог для нахождения погоды в городе
     async def start_weather_message(self, update,
@@ -124,22 +140,44 @@ class TelegramBot:
         elif button_type == 'get_location':
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text='Введите команду /get_weather_location'
+                text='Введите команду /start_get_location'
             )
         else:
             await query.answer('Отправляю...')
             await self.get_full_weather_city(update, button_type)  # в button_type сейчас лежит город
 
-    # получить погоду по местоположению
+    # пользователь делится геолокацией
     async def start_get_location(self, update, context):
-
-        keyboard = ReplyKeyboardMarkup(
+        button = ReplyKeyboardMarkup(
             [[KeyboardButton("Поделиться местоположением", request_location=True)]],
             resize_keyboard=True,
             one_time_keyboard=True
         )
-        await update.message.reply_text("Пожалуйста, поделитесь своим местоположением.", reply_markup=keyboard)
+        await update.message.reply_text("Пожалуйста, поделитесь своим местоположением.", reply_markup=button)
+        return 'get_weather_location'
 
+    async def get_weather_location(self, update, context):
+        location = update.message.location
+        if location:
+            await update.message.reply_text("Спасибо за предоставленное местоположение.",
+                                            reply_markup=ReplyKeyboardRemove())
+            latitude = location.latitude
+            longitude = location.longitude
+            city = get_city_by_coordinates(latitude, longitude)
+            weather = get_temperature(city)
+            if weather != '':
+                self.logger.info(weather)
+                await update.message.reply_text(f"Сейчас в городе {city.lower().capitalize()}: {weather}"
+                                                f" {get_status(city)}\n\nДобавить город в список отслеживаемых?",
+                                                reply_markup=self.inline_keyboard_city)
+            else:
+                await update.message.reply_text("Что то пошло не так... Попробуйте ещё раз! /start_get_location")
+        else:
+            await update.message.reply_text("Я не получил ваше местоположнеие( Попробуйте ещё раз! /start_get_location")
+
+        return ConversationHandler.END
+
+    # полная погода))) или вывод погоды на неделю
     async def get_full_weather_city(self, update, city):
         weather_for_week = get_weather_week(city)
         weather_now = get_temperature(city)
@@ -155,7 +193,7 @@ class TelegramBot:
                 f"Прямо сейчас в городе {city} {weather_now}, {status}\n\n Погода на неделю:\n{weather_for_week}"
             )
         else:
-            self.logger.error("Update is not supported for this operation.")
+            self.logger.error("ошибка((")
 
     # добавление города в список отслеживаемых
     def add_tracked_city(self, user_id, city_name):
